@@ -4,26 +4,41 @@
 *.dll
 *.so
 *.dylib
+soulhound
+
+# Test binary, built with `go test -c`
+*.test
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Temporary files generated during the build process
-*_testmain.go
-*.test
-*.prof
-
-# Directories for dependency management tools like Go modules and dep
+# Dependency directories (remove the comment below to include it)
 vendor/
-Gopkg.lock
-Gopkg.toml
-go.sum
 
-# IDE/editor specific settings
-.vscode/
+# Go workspace file
+go.work
+
+# IDE specific files
 .idea/
+.vscode/
 *.swp
-*~
+*.swo
 
-# Environment variables
+# Environment files
 .env
+*.env
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Binary output directory
+bin/
+dist/
+
+# Local development configurations
+config.local.yaml
+config.dev.yaml
