@@ -13,10 +13,20 @@ A powerful Discord music bot that can play music from both YouTube and Spotify, 
 
 ## Prerequisites
 
-- Go 1.24 or higher
+- Go 1.21 or higher
 - Discord Bot Token
-- YouTube Data API Token (optional)
-- Spotify API Token (optional)
+- YouTube Data API Token (optional, falls back to mock data)
+- Spotify API Token (optional, falls back to mock data)
+
+## Recent Updates
+
+- ✅ Fixed module import path issues
+- ✅ Implemented working audio provider search functionality
+- ✅ Added graceful error handling and fallbacks
+- ✅ Voice channel requirement now only applies to music commands
+- ✅ Added comprehensive help system
+- ✅ Improved concurrent access safety
+- ✅ Added mock data fallbacks for testing without API keys
 
 ## Installation
 
@@ -49,6 +59,7 @@ Or use command-line flags when running the bot:
 
 ## Commands
 
+- `!help` - Show all available commands and usage examples
 - `!play <query>` - Play a song (prefix with yt: or sp: to specify platform)
 - `!pause` - Pause current playback
 - `!resume` - Resume paused playback
@@ -62,6 +73,7 @@ Or use command-line flags when running the bot:
 
 Examples:
 ```bash
+!help
 !play yt:never gonna give you up
 !play sp:shape of you
 !setdefault yt

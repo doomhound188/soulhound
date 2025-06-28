@@ -481,14 +481,23 @@ func (b *Bot) joinVoiceChannel(guildID, channelID string) (*VoiceConnection, err
 }
 
 func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
+	// Validate URL
+	if url == "" {
+		return fmt.Errorf("empty stream URL")
+	}
+
 	// Create DCA encoding session
 	options := dca.StdEncodeOptions
 	options.RawOutput = true
 	options.Bitrate = 96
 
+	// For URLs that are not directly streamable (like Spotify URLs or YouTube URLs without extraction),
+	// we should ideally use youtube-dl or similar tools. For now, we'll handle the error gracefully.
 	encodingSession, err := dca.EncodeFile(url, options)
 	if err != nil {
-		return err
+		// Log the error but don't fail completely
+		log.Printf("Warning: Could not encode audio from URL %s: %v", url, err)
+		return fmt.Errorf("audio streaming not available for this source: %w", err)
 	}
 	defer encodingSession.Cleanup()
 
@@ -498,6 +507,9 @@ func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
 	vc.stream = stream
 
 	err = <-done
+	if err != nil {
+		log.Printf("Streaming finished with error: %v", err)
+	}
 	return err
 }
 
@@ -519,6 +531,7 @@ func (b *Bot) addRecommendations(track *queue.Track) {
 		b.queue.Add(queue.Track{
 			Title:    result.Title,
 			Artist:   result.Artist,
+			URL:      result.ID,
 			Platform: track.Platform,
 			Genre:    result.Genre,
 		})
