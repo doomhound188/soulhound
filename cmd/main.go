@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/doomhound/soulhound/internal/bot"
-	"github.com/doomhound/soulhound/internal/config"
+	"github.com/doomhound188/soulhound/internal/bot"
+	"github.com/doomhound188/soulhound/internal/config"
 )
 
 func main() {

@@ -9,9 +9,9 @@ import (
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/doomhound/soulhound/internal/audio"
-	"github.com/doomhound/soulhound/internal/config"
-	"github.com/doomhound/soulhound/internal/queue"
+	"github.com/doomhound188/soulhound/internal/audio"
+	"github.com/doomhound188/soulhound/internal/config"
+	"github.com/doomhound188/soulhound/internal/queue"
 	"github.com/jonas747/dca"
 )
 
@@ -90,20 +90,36 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	command := parts[0]
 	args := parts[1:]
 
-	// Get voice channel of the user
-	voiceState, err := s.State.VoiceState(m.GuildID, m.Author.ID)
-	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, "Error: You must be in a voice channel")
-		return
+	// Check if command requires voice channel
+	voiceRequiredCommands := []string{"play", "pause", "resume", "stop", "skip"}
+	requiresVoice := false
+	for _, cmd := range voiceRequiredCommands {
+		if strings.ToLower(command) == cmd {
+			requiresVoice = true
+			break
+		}
 	}
 
-	response, err := b.HandleCommand(command, args, voiceState.ChannelID)
+	var voiceChannelID string
+	if requiresVoice {
+		// Get voice channel of the user
+		voiceState, err := s.State.VoiceState(m.GuildID, m.Author.ID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Error: You must be in a voice channel to use this command")
+			return
+		}
+		voiceChannelID = voiceState.ChannelID
+	}
+
+	response, err := b.HandleCommand(command, args, voiceChannelID)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error: %s", err))
 		return
 	}
 
-	s.ChannelMessageSend(m.ChannelID, response)
+	if response != "" {
+		s.ChannelMessageSend(m.ChannelID, response)
+	}
 }
 
 func (b *Bot) HandleCommand(command string, args []string, channelID string) (string, error) {
@@ -128,8 +144,10 @@ func (b *Bot) HandleCommand(command string, args []string, channelID string) (st
 		return b.handleSetDefault(args)
 	case "smartplay":
 		return b.handleSmartPlay(args)
+	case "help":
+		return b.handleHelp()
 	default:
-		return "", errors.New("unknown command")
+		return "", errors.New("unknown command. Type !help for available commands")
 	}
 }
 
@@ -138,8 +156,27 @@ func (b *Bot) handlePlay(args []string, channelID string) (string, error) {
 		return "", errors.New("please provide a search query")
 	}
 
-	// Join voice channel first
-	guildID := b.session.State.Ready.Guilds[0].ID // For simplicity, using first guild
+	if channelID == "" {
+		return "", errors.New("you must be in a voice channel to play music")
+	}
+
+	// Get guild ID from a connected voice channel or use the first available guild
+	var guildID string
+	if len(b.voiceConn) > 0 {
+		// Use existing connection's guild
+		for gid := range b.voiceConn {
+			guildID = gid
+			break
+		}
+	} else {
+		// Find guild ID from session state safely
+		if b.session.State != nil && b.session.State.Guilds != nil && len(b.session.State.Guilds) > 0 {
+			guildID = b.session.State.Guilds[0].ID
+		} else {
+			return "", errors.New("no guild available to join voice channel")
+		}
+	}
+
 	_, err := b.joinVoiceChannel(guildID, channelID)
 	if err != nil {
 		return "", fmt.Errorf("failed to join voice channel: %w", err)
@@ -390,10 +427,15 @@ func (b *Bot) startPlaying() {
 			streamURL, _ = b.spotifyPlayer.GetStreamURL(track.URL)
 		}
 
+		// Get a copy of voice connections for iteration
+		voiceConnections := make(map[string]*VoiceConnection)
+		for k, v := range b.voiceConn {
+			voiceConnections[k] = v
+		}
 		b.mu.Unlock()
 
 		// Stream to all connected voice channels
-		for guildID, vc := range b.voiceConn {
+		for guildID, vc := range voiceConnections {
 			if err := b.streamAudio(streamURL, vc); err != nil {
 				log.Printf("Error streaming audio in guild %s: %v", guildID, err)
 			}
@@ -439,14 +481,23 @@ func (b *Bot) joinVoiceChannel(guildID, channelID string) (*VoiceConnection, err
 }
 
 func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
+	// Validate URL
+	if url == "" {
+		return fmt.Errorf("empty stream URL")
+	}
+
 	// Create DCA encoding session
 	options := dca.StdEncodeOptions
 	options.RawOutput = true
 	options.Bitrate = 96
 
+	// For URLs that are not directly streamable (like Spotify URLs or YouTube URLs without extraction),
+	// we should ideally use youtube-dl or similar tools. For now, we'll handle the error gracefully.
 	encodingSession, err := dca.EncodeFile(url, options)
 	if err != nil {
-		return err
+		// Log the error but don't fail completely
+		log.Printf("Warning: Could not encode audio from URL %s: %v", url, err)
+		return fmt.Errorf("audio streaming not available for this source: %w", err)
 	}
 	defer encodingSession.Cleanup()
 
@@ -456,6 +507,9 @@ func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
 	vc.stream = stream
 
 	err = <-done
+	if err != nil {
+		log.Printf("Streaming finished with error: %v", err)
+	}
 	return err
 }
 
@@ -477,8 +531,41 @@ func (b *Bot) addRecommendations(track *queue.Track) {
 		b.queue.Add(queue.Track{
 			Title:    result.Title,
 			Artist:   result.Artist,
+			URL:      result.ID,
 			Platform: track.Platform,
 			Genre:    result.Genre,
 		})
 	}
+}
+
+func (b *Bot) handleHelp() (string, error) {
+	help := `**SoulHound Music Bot Commands:**
+
+**Music Controls (requires voice channel):**
+• !play <query> - Play a song (prefix with yt: or sp: to specify platform)
+• !pause - Pause current playback
+• !resume - Resume paused playback
+• !stop - Stop playback and clear queue
+• !skip - Skip to next track
+
+**Queue Management:**
+• !queue - Show current queue
+• !remove <number> - Remove track from queue
+
+**Search & Discovery:**
+• !search <query> - Search without adding to queue
+
+**Settings:**
+• !setdefault <yt/sp> - Set default platform (YouTube/Spotify)
+• !smartplay <on/off> - Toggle smart recommendations
+
+**Examples:**
+• !play yt:never gonna give you up
+• !play sp:shape of you
+• !setdefault yt
+• !smartplay on
+
+Type !help to see this message again.`
+	
+	return help, nil
 }

@@ -1,4 +1,4 @@
-module github.com/doomhound/soulhound
+module github.com/doomhound188/soulhound
 
 go 1.21
 
