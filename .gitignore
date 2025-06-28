@@ -5,6 +5,7 @@
 *.so
 *.dylib
 soulhound
+soulhound-bin
 
 # Test binary, built with `go test -c`
 *.test
