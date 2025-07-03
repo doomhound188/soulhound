@@ -1,0 +1,20 @@
+# Development docker-compose override
+version: '3.8'
+
+services:
+  soulhound:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount source code for development
+      - .:/app:ro
+      # Mount logs for debugging
+      - ./logs:/app/logs
+    environment:
+      - GO_ENV=development
+    # Override command for development
+    command: ["./soulhound", "--help"]
+    # Enable TTY for interactive debugging
+    tty: true
+    stdin_open: true

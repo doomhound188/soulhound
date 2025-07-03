@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  soulhound:
+    build: .
+    container_name: soulhound-bot
+    restart: unless-stopped
+    environment:
+      # Discord Bot Token (required)
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      # YouTube API Token (optional)
+      - YOUTUBE_TOKEN=${YOUTUBE_TOKEN}
+      # Spotify API Token (optional) 
+      - SPOTIFY_TOKEN=${SPOTIFY_TOKEN}
+    volumes:
+      # Optional: Mount logs directory
+      - ./logs:/app/logs
+    # Health check
+    healthcheck:
+      test: ["CMD", "pgrep", "soulhound"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Resource limits (optional but recommended)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
