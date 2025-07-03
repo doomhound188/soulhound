@@ -15,7 +15,7 @@ test: ## Run Go tests
 	go test -v ./...
 
 clean: ## Clean build artifacts
-	rm -f soulhound soulhound-bin
+	rm -f soulhound-bin ./soulhound
 	go clean
 
 # Docker targets

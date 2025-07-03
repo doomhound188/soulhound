@@ -35,6 +35,8 @@ A powerful Discord music bot that can play music from both YouTube and Spotify, 
 
 ## Quick Start with Docker/Podman
 
+> 📖 **For detailed container documentation, see [docs/CONTAINERS.md](docs/CONTAINERS.md)**
+
 ### Option 1: Using Pre-built Scripts (Recommended)
 
 1. **Clone the repository:**
