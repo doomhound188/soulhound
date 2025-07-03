@@ -43,3 +43,8 @@ dist/
 # Local development configurations
 config.local.yaml
 config.dev.yaml
+
+# Container and deployment files
+.env
+docker-compose.override.yml
+docker-compose.local.yml

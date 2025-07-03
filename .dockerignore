@@ -1,0 +1,67 @@
+# Docker ignore file for SoulHound
+# Ignore non-essential files to optimize build context
+
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+soulhound
+soulhound-bin
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Dependencies
+vendor/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Environment and config files
+.env
+*.env
+config.local.yaml
+config.dev.yaml
+
+# Log files
+*.log
+logs/
+
+# Documentation (we want to keep README.md but not docs build artifacts)
+docs/_build/
+docs/.build/
+
+# Container related files (we don't need these in the build context)
+docker-compose.*.yml
+*.dockerfile
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Go workspace file
+go.work
+
+# CI/CD artifacts (except the actual workflow files)
+.github/workflows/*.log
