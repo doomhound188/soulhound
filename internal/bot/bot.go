@@ -48,7 +48,7 @@ func New(cfg *config.Config) (*Bot, error) {
 	}
 
 	session.AddHandler(bot.messageHandler)
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates
+	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates | discordgo.IntentsMessageContent
 
 	return bot, nil
 }
@@ -566,6 +566,6 @@ func (b *Bot) handleHelp() (string, error) {
 • !smartplay on
 
 Type !help to see this message again.`
-	
+
 	return help, nil
 }
