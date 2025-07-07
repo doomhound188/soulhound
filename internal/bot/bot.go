@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/doomhound188/soulhound/internal/audio"
@@ -48,6 +49,8 @@ func New(cfg *config.Config) (*Bot, error) {
 	}
 
 	session.AddHandler(bot.messageHandler)
+	session.AddHandler(bot.readyHandler)
+	session.AddHandler(bot.voiceStateUpdateHandler)
 	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildVoiceStates | discordgo.IntentsMessageContent
 
 	return bot, nil
@@ -68,6 +71,21 @@ func (b *Bot) Close() error {
 		}
 	}
 	return b.session.Close()
+}
+
+func (b *Bot) readyHandler(s *discordgo.Session, r *discordgo.Ready) {
+	log.Printf("Bot is ready! Logged in as: %s#%s", r.User.Username, r.User.Discriminator)
+	log.Printf("Connected to %d guilds", len(r.Guilds))
+}
+
+func (b *Bot) voiceStateUpdateHandler(s *discordgo.Session, vsu *discordgo.VoiceStateUpdate) {
+	// Update our internal state tracking
+	// This handler ensures we have the most up-to-date voice state information
+	if vsu.ChannelID == "" {
+		log.Printf("User %s left voice channel in guild %s", vsu.UserID, vsu.GuildID)
+	} else {
+		log.Printf("User %s joined voice channel %s in guild %s", vsu.UserID, vsu.ChannelID, vsu.GuildID)
+	}
 }
 
 func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -102,16 +120,94 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	var voiceChannelID string
 	if requiresVoice {
-		// Get voice channel of the user
+		// Ensure we have a valid guild ID
+		if m.GuildID == "" {
+			s.ChannelMessageSend(m.ChannelID, "Error: This command can only be used in a server")
+			return
+		}
+
+		// Skip permission check for now as it's causing false positives
+		// The Discord permissions screen shows the bot has all required permissions
+
+		// Try multiple methods to get voice state
+		var voiceState *discordgo.VoiceState
+		log.Printf("Voice detection: Starting voice state lookup for user %s (%s) in guild %s", m.Author.Username, m.Author.ID, m.GuildID)
+
+		// Method 1: Try to get voice state from cache
 		voiceState, err := s.State.VoiceState(m.GuildID, m.Author.ID)
 		if err != nil {
-			s.ChannelMessageSend(m.ChannelID, "Error: You must be in a voice channel to use this command")
+			log.Printf("Voice detection: Cache lookup failed: %v", err)
+		} else if voiceState != nil && voiceState.ChannelID != "" {
+			log.Printf("Voice detection: Found voice state in cache - Channel: %s", voiceState.ChannelID)
+		} else {
+			log.Printf("Voice detection: Cache lookup returned nil or empty channel")
+		}
+
+		if err != nil || voiceState == nil || voiceState.ChannelID == "" {
+			// Method 2: Search through all cached voice states in the guild
+			log.Printf("Voice detection: Trying method 2 - searching guild voice states")
+			guild, err2 := s.State.Guild(m.GuildID)
+			if err2 == nil && guild != nil {
+				log.Printf("Voice detection: Found guild with %d voice states", len(guild.VoiceStates))
+				for _, vs := range guild.VoiceStates {
+					if vs.UserID == m.Author.ID && vs.ChannelID != "" {
+						log.Printf("Voice detection: Found matching voice state in guild cache - Channel: %s", vs.ChannelID)
+						voiceState = vs
+						break
+					}
+				}
+			} else {
+				log.Printf("Voice detection: Could not get guild from cache: %v", err2)
+			}
+		}
+
+		// Method 3: If still no voice state, make a direct API call
+		if voiceState == nil || voiceState.ChannelID == "" {
+			log.Printf("Voice detection: Trying method 3 - direct API call")
+			// Get fresh guild data from Discord API
+			guild, err := s.Guild(m.GuildID)
+			if err == nil && guild != nil {
+				log.Printf("Voice detection: API call successful, found %d voice states", len(guild.VoiceStates))
+				for _, vs := range guild.VoiceStates {
+					if vs.UserID == m.Author.ID && vs.ChannelID != "" {
+						log.Printf("Voice detection: Found matching voice state via API - Channel: %s", vs.ChannelID)
+						voiceState = vs
+						break
+					}
+				}
+			} else {
+				log.Printf("Voice detection: API call failed: %v", err)
+			}
+		}
+
+		// Method 4: Last resort - wait a moment and try cache again
+		if voiceState == nil || voiceState.ChannelID == "" {
+			log.Printf("Voice detection: Trying method 4 - retry after delay")
+			// Sometimes there's a delay in state updates, give it a moment
+			time.Sleep(100 * time.Millisecond)
+			voiceState, _ = s.State.VoiceState(m.GuildID, m.Author.ID)
+			if voiceState != nil && voiceState.ChannelID != "" {
+				log.Printf("Voice detection: Found voice state after delay - Channel: %s", voiceState.ChannelID)
+			}
+		}
+
+		if voiceState == nil || voiceState.ChannelID == "" {
+			log.Printf("Voice detection: FAILED - No voice state found after all methods")
+			errorMsg := "❌ **You must be in a voice channel to use this command**\n\n"
+			errorMsg += "**Troubleshooting:**\n"
+			errorMsg += "• Make sure you're connected to a voice channel\n"
+			errorMsg += "• Try leaving and rejoining the voice channel\n"
+			errorMsg += "• Use `!debug` to see voice channel information\n"
+			errorMsg += "• Wait a few seconds after joining before using commands\n"
+			errorMsg += "• Check if the bot can see the voice channel you're in"
+			s.ChannelMessageSend(m.ChannelID, errorMsg)
 			return
 		}
 		voiceChannelID = voiceState.ChannelID
+		log.Printf("Voice detection: SUCCESS - User %s is in voice channel %s", m.Author.Username, voiceChannelID)
 	}
 
-	response, err := b.HandleCommand(command, args, voiceChannelID)
+	response, err := b.HandleCommand(command, args, voiceChannelID, m.GuildID)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error: %s", err))
 		return
@@ -122,10 +218,10 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 }
 
-func (b *Bot) HandleCommand(command string, args []string, channelID string) (string, error) {
+func (b *Bot) HandleCommand(command string, args []string, channelID string, guildID string) (string, error) {
 	switch strings.ToLower(command) {
 	case "play":
-		return b.handlePlay(args, channelID)
+		return b.handlePlay(args, channelID, guildID)
 	case "pause":
 		return b.handlePause()
 	case "resume":
@@ -146,35 +242,25 @@ func (b *Bot) HandleCommand(command string, args []string, channelID string) (st
 		return b.handleSmartPlay(args)
 	case "help":
 		return b.handleHelp()
+	case "debug":
+		return b.handleDebug(guildID)
 	default:
 		return "", errors.New("unknown command. Type !help for available commands")
 	}
 }
 
-func (b *Bot) handlePlay(args []string, channelID string) (string, error) {
+func (b *Bot) handlePlay(args []string, channelID string, guildID string) (string, error) {
 	if len(args) == 0 {
 		return "", errors.New("please provide a search query")
 	}
 
 	if channelID == "" {
-		return "", errors.New("you must be in a voice channel to play music")
+		return "", errors.New("you must be in a voice channel to play music - use !debug to troubleshoot")
 	}
 
-	// Get guild ID from a connected voice channel or use the first available guild
-	var guildID string
-	if len(b.voiceConn) > 0 {
-		// Use existing connection's guild
-		for gid := range b.voiceConn {
-			guildID = gid
-			break
-		}
-	} else {
-		// Find guild ID from session state safely
-		if b.session.State != nil && b.session.State.Guilds != nil && len(b.session.State.Guilds) > 0 {
-			guildID = b.session.State.Guilds[0].ID
-		} else {
-			return "", errors.New("no guild available to join voice channel")
-		}
+	// Validate guild ID
+	if guildID == "" {
+		return "", errors.New("no guild available to join voice channel - this command must be used in a server")
 	}
 
 	_, err := b.joinVoiceChannel(guildID, channelID)
@@ -559,6 +645,9 @@ func (b *Bot) handleHelp() (string, error) {
 • !setdefault <yt/sp> - Set default platform (YouTube/Spotify)
 • !smartplay <on/off> - Toggle smart recommendations
 
+**Debug:**
+• !debug - Show voice channel debug information
+
 **Examples:**
 • !play yt:never gonna give you up
 • !play sp:shape of you
@@ -568,4 +657,224 @@ func (b *Bot) handleHelp() (string, error) {
 Type !help to see this message again.`
 
 	return help, nil
+}
+
+func (b *Bot) handleDebug(guildID string) (string, error) {
+	if guildID == "" {
+		return "Debug: No guild ID available", nil
+	}
+
+	var debugInfo strings.Builder
+	debugInfo.WriteString(fmt.Sprintf("**Debug Information for Guild: %s**\n", guildID))
+
+	// Check bot permissions
+	debugInfo.WriteString(fmt.Sprintf("**Bot Intents:** %d\n", b.session.Identify.Intents))
+	debugInfo.WriteString("**Required Intents:** GuildMessages + GuildVoiceStates + MessageContent\n\n")
+
+	// Detailed permission check
+	debugInfo.WriteString("**Permission Analysis:**\n")
+	if permInfo := b.getDetailedPermissions(guildID); permInfo != "" {
+		debugInfo.WriteString(permInfo)
+	} else {
+		debugInfo.WriteString("❌ Could not retrieve permission information\n")
+	}
+	debugInfo.WriteString("\n")
+
+	// Try to get guild info
+	guild, err := b.session.State.Guild(guildID)
+	if err != nil {
+		debugInfo.WriteString(fmt.Sprintf("❌ Error getting guild from cache: %v\n", err))
+
+		// Try API call
+		guild, err = b.session.Guild(guildID)
+		if err != nil {
+			debugInfo.WriteString(fmt.Sprintf("❌ Error getting guild from API: %v\n", err))
+			return debugInfo.String(), nil
+		} else {
+			debugInfo.WriteString("✅ Guild retrieved from API\n")
+		}
+	} else {
+		debugInfo.WriteString("✅ Guild retrieved from cache\n")
+	}
+
+	debugInfo.WriteString(fmt.Sprintf("Guild Name: %s\n", guild.Name))
+	debugInfo.WriteString(fmt.Sprintf("Voice States Count: %d\n", len(guild.VoiceStates)))
+
+	if len(guild.VoiceStates) > 0 {
+		debugInfo.WriteString("\n**Current Voice States:**\n")
+		for i, vs := range guild.VoiceStates {
+			if i >= 10 { // Limit output
+				debugInfo.WriteString("... (truncated)\n")
+				break
+			}
+			member, err := b.session.State.Member(guildID, vs.UserID)
+			username := vs.UserID
+			if err == nil && member != nil {
+				username = member.User.Username
+			}
+			debugInfo.WriteString(fmt.Sprintf("• %s (ID: %s) in channel %s\n", username, vs.UserID, vs.ChannelID))
+		}
+	} else {
+		debugInfo.WriteString("No users in voice channels\n")
+	}
+
+	// Check voice connections
+	debugInfo.WriteString(fmt.Sprintf("\n**Bot Voice Connections:** %d\n", len(b.voiceConn)))
+	for gid, vc := range b.voiceConn {
+		debugInfo.WriteString(fmt.Sprintf("• Guild %s: Channel %s\n", gid, vc.channelID))
+	}
+
+	return debugInfo.String(), nil
+}
+
+// getDetailedPermissions provides detailed permission information for debugging
+func (b *Bot) getDetailedPermissions(guildID string) string {
+	var permInfo strings.Builder
+
+	// Get the bot's member info in the guild
+	botMember, err := b.session.State.Member(guildID, b.session.State.User.ID)
+	if err != nil {
+		botMember, err = b.session.GuildMember(guildID, b.session.State.User.ID)
+		if err != nil {
+			return fmt.Sprintf("❌ Could not get bot member info: %v\n", err)
+		}
+	}
+
+	// Get guild info
+	guild, err := b.session.State.Guild(guildID)
+	if err != nil {
+		guild, err = b.session.Guild(guildID)
+		if err != nil {
+			return fmt.Sprintf("❌ Could not get guild info: %v\n", err)
+		}
+	}
+
+	// Calculate total permissions
+	permissions := int64(0)
+
+	// Check @everyone role permissions
+	for _, role := range guild.Roles {
+		if role.ID == guildID { // @everyone role
+			permissions |= role.Permissions
+			permInfo.WriteString(fmt.Sprintf("@everyone permissions: %d\n", role.Permissions))
+			break
+		}
+	}
+
+	// Add permissions from bot's roles
+	permInfo.WriteString("Bot roles:\n")
+	for _, roleID := range botMember.Roles {
+		for _, role := range guild.Roles {
+			if role.ID == roleID {
+				permissions |= role.Permissions
+				permInfo.WriteString(fmt.Sprintf("• %s: %d\n", role.Name, role.Permissions))
+				break
+			}
+		}
+	}
+
+	permInfo.WriteString(fmt.Sprintf("**Total calculated permissions: %d**\n", permissions))
+
+	// Check specific permissions
+	const (
+		PermissionViewChannel  = int64(1024)    // 0x400
+		PermissionConnect      = int64(1048576) // 0x100000
+		PermissionSpeak        = int64(2097152) // 0x200000
+		PermissionSendMessages = int64(2048)    // 0x800
+	)
+
+	permInfo.WriteString("**Required Permission Check:**\n")
+
+	if permissions&int64(8) != 0 { // Administrator
+		permInfo.WriteString("✅ Administrator (has all permissions)\n")
+	} else {
+		if permissions&PermissionViewChannel != 0 {
+			permInfo.WriteString("✅ View Channels\n")
+		} else {
+			permInfo.WriteString("❌ View Channels\n")
+		}
+
+		if permissions&PermissionSendMessages != 0 {
+			permInfo.WriteString("✅ Send Messages\n")
+		} else {
+			permInfo.WriteString("❌ Send Messages\n")
+		}
+
+		if permissions&PermissionConnect != 0 {
+			permInfo.WriteString("✅ Connect\n")
+		} else {
+			permInfo.WriteString("❌ Connect\n")
+		}
+
+		if permissions&PermissionSpeak != 0 {
+			permInfo.WriteString("✅ Speak\n")
+		} else {
+			permInfo.WriteString("❌ Speak\n")
+		}
+	}
+
+	return permInfo.String()
+}
+
+// checkVoicePermissions verifies that the bot has the necessary permissions for voice operations
+func (b *Bot) checkVoicePermissions(s *discordgo.Session, guildID string) bool {
+	// Get the bot's member info in the guild
+	botMember, err := s.State.Member(guildID, s.State.User.ID)
+	if err != nil {
+		// Try API call if cache fails
+		botMember, err = s.GuildMember(guildID, s.State.User.ID)
+		if err != nil {
+			log.Printf("Warning: Could not get bot member info for permission check: %v", err)
+			return true // Assume permissions are okay if we can't check
+		}
+	}
+
+	// Get guild info to check permissions
+	guild, err := s.State.Guild(guildID)
+	if err != nil {
+		guild, err = s.Guild(guildID)
+		if err != nil {
+			log.Printf("Warning: Could not get guild info for permission check: %v", err)
+			return true // Assume permissions are okay if we can't check
+		}
+	}
+
+	// Calculate permissions for the bot
+	permissions := int64(0)
+
+	// Check @everyone role permissions
+	for _, role := range guild.Roles {
+		if role.ID == guildID { // @everyone role has the same ID as the guild
+			permissions |= role.Permissions
+			break
+		}
+	}
+
+	// Add permissions from bot's roles
+	for _, roleID := range botMember.Roles {
+		for _, role := range guild.Roles {
+			if role.ID == roleID {
+				permissions |= role.Permissions
+				break
+			}
+		}
+	}
+
+	// Check for required permissions
+	const (
+		PermissionViewChannel  = int64(0x0000000000000400) // 1024
+		PermissionConnect      = int64(0x0000000000100000) // 1048576
+		PermissionSpeak        = int64(0x0000000000200000) // 2097152
+		PermissionSendMessages = int64(0x0000000000000800) // 2048
+	)
+
+	requiredPerms := PermissionViewChannel | PermissionConnect | PermissionSpeak | PermissionSendMessages
+
+	// Check if bot has administrator permission (overrides all)
+	if permissions&int64(0x0000000000000008) != 0 { // Administrator permission
+		return true
+	}
+
+	// Check specific required permissions
+	return (permissions & requiredPerms) == requiredPerms
 }

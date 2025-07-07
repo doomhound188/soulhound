@@ -245,6 +245,45 @@ Examples:
 !smartplay on
 ```
 
+## Troubleshooting
+
+### Voice Channel Detection Issues
+
+If you're experiencing the error "You must be in a voice channel to use this command" even when you are in a voice channel, try these solutions:
+
+#### Quick Fixes:
+1. **Leave and rejoin your voice channel** - This refreshes your voice state
+2. **Wait a few seconds** after joining a voice channel before using commands
+3. **Use the debug command** to check voice channel detection:
+   ```bash
+   !debug
+   ```
+
+#### Common Causes:
+- **Bot permissions**: The bot needs `View Channels`, `Connect`, and `Speak` permissions
+- **Voice channel permissions**: Check if the bot can see the specific voice channel you're in
+- **Discord API delays**: Sometimes there's a delay in voice state updates
+
+#### Bot Permissions Checklist:
+Make sure the bot has these permissions in your server:
+- ✅ View Channels
+- ✅ Send Messages  
+- ✅ Connect (to voice channels)
+- ✅ Speak (in voice channels)
+- ✅ Read Message History
+
+#### Advanced Troubleshooting:
+1. **Re-invite the bot** with proper permissions using this URL format:
+   ```
+   https://discord.com/api/oauth2/authorize?client_id=YOUR_BOT_ID&permissions=3148800&scope=bot
+   ```
+
+2. **Check voice channel permissions** - Right-click the voice channel → Edit Channel → Permissions
+
+3. **Restart the bot** if issues persist
+
+For detailed troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ## Development
 
 The project structure follows standard Go project layout:
