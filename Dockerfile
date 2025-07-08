@@ -21,6 +21,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o soulhound cmd/mai
 # Runtime stage - using scratch for minimal size, or alpine for debugging
 FROM alpine:latest
 
+# Install ffmpeg and yt-dlp for audio processing
+RUN apk update && apk add --no-cache \
+    ffmpeg \
+    python3 \
+    py3-pip && \
+    pip3 install --no-cache-dir --break-system-packages yt-dlp
+
 # Create non-root user for security
 RUN addgroup -g 1001 -S soulhound && \
     adduser -u 1001 -S soulhound -G soulhound
