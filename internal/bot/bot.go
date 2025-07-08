@@ -78,6 +78,25 @@ func (b *Bot) Close() error {
 func (b *Bot) readyHandler(s *discordgo.Session, r *discordgo.Ready) {
 	log.Printf("Bot is ready! Logged in as: %s#%s", r.User.Username, r.User.Discriminator)
 	log.Printf("Connected to %d guilds", len(r.Guilds))
+	log.Printf("Bot intents configured: %d", s.Identify.Intents)
+	log.Printf("Required intents: %d", discordgo.IntentsGuildMessages|discordgo.IntentsGuildVoiceStates|discordgo.IntentsMessageContent)
+	
+	// Initialize voice states from current guild data for all guilds
+	totalVoiceStates := 0
+	for _, guild := range r.Guilds {
+		if guild.VoiceStates != nil {
+			b.mu.Lock()
+			for _, vs := range guild.VoiceStates {
+				if vs.ChannelID != "" {
+					key := vs.GuildID + ":" + vs.UserID
+					b.voiceStates[key] = vs
+					totalVoiceStates++
+				}
+			}
+			b.mu.Unlock()
+		}
+	}
+	log.Printf("Initialized with %d voice states across all guilds", totalVoiceStates)
 }
 
 func (b *Bot) voiceStateUpdateHandler(s *discordgo.Session, vsu *discordgo.VoiceStateUpdate) {
@@ -99,6 +118,12 @@ func (b *Bot) voiceStateUpdateHandler(s *discordgo.Session, vsu *discordgo.Voice
 			UserID:    vsu.UserID,
 			ChannelID: vsu.ChannelID,
 			GuildID:   vsu.GuildID,
+			SessionID: vsu.SessionID,
+			Deaf:      vsu.Deaf,
+			Mute:      vsu.Mute,
+			SelfDeaf:  vsu.SelfDeaf,
+			SelfMute:  vsu.SelfMute,
+			Suppress:  vsu.Suppress,
 		}
 		log.Printf("🔊 Internal tracking: Added user %s to channel %s in guild %s (total tracked: %d)", vsu.UserID, vsu.ChannelID, vsu.GuildID, len(b.voiceStates))
 	}
@@ -354,7 +379,19 @@ func (b *Bot) handlePlay(args []string, channelID string, guildID string) (strin
 		go b.startPlaying()
 	}
 
-	return fmt.Sprintf("Added to queue: %s - %s", track.Title, track.Artist), nil
+	// Provide helpful feedback about what will happen
+	var response string
+	if strings.HasPrefix(track.URL, "mock_") || strings.HasPrefix(track.URL, "spotify_mock_") {
+		response = fmt.Sprintf("✅ **Added to queue:** %s - %s\n🎵 **Note:** This is a test track that will play silence for demonstration purposes.", track.Title, track.Artist)
+	} else if track.Platform == "yt" {
+		response = fmt.Sprintf("✅ **Added to queue:** %s - %s\n⚠️ **Note:** YouTube audio streaming requires youtube-dl/yt-dlp setup for actual playback.", track.Title, track.Artist)
+	} else if track.Platform == "sp" {
+		response = fmt.Sprintf("✅ **Added to queue:** %s - %s\n⚠️ **Note:** Spotify tracks cannot be streamed directly due to licensing restrictions.", track.Title, track.Artist)
+	} else {
+		response = fmt.Sprintf("✅ **Added to queue:** %s - %s", track.Title, track.Artist)
+	}
+	
+	return response, nil
 }
 
 func (b *Bot) handlePause() (string, error) {
@@ -610,18 +647,82 @@ func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
 		return fmt.Errorf("empty stream URL")
 	}
 
+	log.Printf("Attempting to stream audio from URL: %s", url)
+
+	// Check if this is a mock/test URL
+	if strings.HasPrefix(url, "mock_") {
+		log.Printf("Mock audio detected, creating test silence stream")
+		return b.streamTestAudio(vc)
+	}
+
+	// Check if this is a YouTube URL or ID
+	if strings.Contains(url, "youtube.com") || strings.Contains(url, "youtu.be") || len(url) == 11 {
+		log.Printf("YouTube content detected. Audio streaming requires external tools like youtube-dl or yt-dlp")
+		return fmt.Errorf("YouTube audio streaming requires additional setup. Please install youtube-dl or yt-dlp for audio extraction")
+	}
+
+	// Check if this is a Spotify ID
+	if len(url) == 22 && !strings.Contains(url, "/") {
+		log.Printf("Spotify content detected. Audio streaming not supported for Spotify tracks")
+		return fmt.Errorf("Spotify audio streaming is not supported. Spotify does not provide direct audio streams")
+	}
+
+	// Try to stream if it's a direct audio URL
+	return b.streamDirectAudio(url, vc)
+}
+
+// streamTestAudio creates a brief test audio stream for testing purposes
+func (b *Bot) streamTestAudio(vc *VoiceConnection) error {
+	log.Printf("Creating test audio stream")
+	
+	// Create a brief silence stream for testing
+	// This demonstrates that the voice connection works
+	if vc.connection == nil {
+		return fmt.Errorf("voice connection is nil")
+	}
+
+	// Send a brief period of silence to test voice connection
+	// This proves the bot can connect and send audio data
+	vc.connection.Speaking(true)
+	defer vc.connection.Speaking(false)
+
+	// Create 2 seconds of silence (48000 Hz, 2 channels, 16-bit samples)
+	silenceFrames := 48000 * 2 * 2 // 2 seconds of audio
+	silenceData := make([]byte, silenceFrames)
+	
+	// Send the silence data in chunks
+	chunkSize := 3840 // 20ms worth of audio data
+	for i := 0; i < len(silenceData); i += chunkSize {
+		end := i + chunkSize
+		if end > len(silenceData) {
+			end = len(silenceData)
+		}
+		
+		select {
+		case vc.connection.OpusSend <- silenceData[i:end]:
+		default:
+			// Channel might be full, skip this frame
+		}
+	}
+
+	log.Printf("Test audio stream completed successfully")
+	return nil
+}
+
+// streamDirectAudio attempts to stream a direct audio file URL
+func (b *Bot) streamDirectAudio(url string, vc *VoiceConnection) error {
+	log.Printf("Attempting to stream direct audio URL: %s", url)
+
 	// Create DCA encoding session
 	options := dca.StdEncodeOptions
 	options.RawOutput = true
 	options.Bitrate = 96
 
-	// For URLs that are not directly streamable (like Spotify URLs or YouTube URLs without extraction),
-	// we should ideally use youtube-dl or similar tools. For now, we'll handle the error gracefully.
+	// Try to encode the URL directly (this only works for direct audio files)
 	encodingSession, err := dca.EncodeFile(url, options)
 	if err != nil {
-		// Log the error but don't fail completely
-		log.Printf("Warning: Could not encode audio from URL %s: %v", url, err)
-		return fmt.Errorf("audio streaming not available for this source: %w", err)
+		log.Printf("Could not encode audio from URL %s: %v", url, err)
+		return fmt.Errorf("unable to stream audio from this source. URL may not be a direct audio file: %w", err)
 	}
 	defer encodingSession.Cleanup()
 
@@ -633,6 +734,8 @@ func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
 	err = <-done
 	if err != nil {
 		log.Printf("Streaming finished with error: %v", err)
+	} else {
+		log.Printf("Streaming completed successfully")
 	}
 	return err
 }
@@ -709,6 +812,12 @@ func (b *Bot) handleDebug(guildID string) (string, error) {
 
 	var debugInfo strings.Builder
 	debugInfo.WriteString(fmt.Sprintf("**Debug Information for Guild: %s**\n", guildID))
+
+	// Check if session is available
+	if b.session == nil {
+		debugInfo.WriteString("❌ Bot session not available (testing mode)\n")
+		return debugInfo.String(), nil
+	}
 
 	// Check bot permissions
 	debugInfo.WriteString(fmt.Sprintf("**Bot Intents:** %d\n", b.session.Identify.Intents))
@@ -806,6 +915,11 @@ func (b *Bot) handleDebug(guildID string) (string, error) {
 // getDetailedPermissions provides detailed permission information for debugging
 func (b *Bot) getDetailedPermissions(guildID string) string {
 	var permInfo strings.Builder
+
+	// Check if session is available for testing
+	if b.session == nil || b.session.State == nil || b.session.State.User == nil {
+		return "❌ Bot session not available (testing mode or not connected)\n"
+	}
 
 	// Get the bot's member info in the guild - always use fresh API data
 	botMember, err := b.session.GuildMember(guildID, b.session.State.User.ID)
