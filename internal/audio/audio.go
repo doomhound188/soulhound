@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 type MusicProvider interface {
@@ -138,15 +139,18 @@ func (yt *YouTubeProvider) getMockResults(query string) []SearchResult {
 }
 
 func (yt *YouTubeProvider) GetStreamURL(id string) (string, error) {
-	// For mock IDs, return a placeholder URL
 	if id == "" {
 		return "", fmt.Errorf("invalid video ID")
 	}
 	
-	// This is a simplified implementation
-	// In production, you'd need youtube-dl or similar to get actual stream URLs
-	// For now, return the youtube URL which can be processed by external tools
-	return fmt.Sprintf("https://www.youtube.com/watch?v=%s", id), nil
+	// For mock IDs, return the ID as-is for testing
+	if strings.HasPrefix(id, "mock_") {
+		return id, nil
+	}
+	
+	// For actual YouTube video IDs, we need external tools to extract stream URLs
+	// Return the video ID for now - the streaming function will handle the error appropriately
+	return id, nil
 }
 
 func (yt *YouTubeProvider) GetRecommendations(genre string) ([]SearchResult, error) {
@@ -221,9 +225,14 @@ func (sp *SpotifyProvider) GetStreamURL(id string) (string, error) {
 		return "", fmt.Errorf("invalid track ID")
 	}
 	
-	// Spotify tracks can't be streamed directly without premium API access
-	// Return the Spotify URL for reference
-	return fmt.Sprintf("https://open.spotify.com/track/%s", id), nil
+	// For mock IDs, return the ID as-is for testing
+	if strings.HasPrefix(id, "spotify_mock_") {
+		return id, nil
+	}
+	
+	// Spotify tracks can't be streamed directly due to licensing restrictions
+	// Return the track ID for the streaming function to handle appropriately
+	return id, nil
 }
 
 func (sp *SpotifyProvider) GetRecommendations(genre string) ([]SearchResult, error) {
