@@ -813,6 +813,12 @@ func (b *Bot) handleDebug(guildID string) (string, error) {
 	var debugInfo strings.Builder
 	debugInfo.WriteString(fmt.Sprintf("**Debug Information for Guild: %s**\n", guildID))
 
+	// Check if session is available
+	if b.session == nil {
+		debugInfo.WriteString("❌ Bot session not available (testing mode)\n")
+		return debugInfo.String(), nil
+	}
+
 	// Check bot permissions
 	debugInfo.WriteString(fmt.Sprintf("**Bot Intents:** %d\n", b.session.Identify.Intents))
 	debugInfo.WriteString("**Required Intents:** GuildMessages + GuildVoiceStates + MessageContent\n")
@@ -909,6 +915,11 @@ func (b *Bot) handleDebug(guildID string) (string, error) {
 // getDetailedPermissions provides detailed permission information for debugging
 func (b *Bot) getDetailedPermissions(guildID string) string {
 	var permInfo strings.Builder
+
+	// Check if session is available for testing
+	if b.session == nil || b.session.State == nil || b.session.State.User == nil {
+		return "❌ Bot session not available (testing mode or not connected)\n"
+	}
 
 	// Get the bot's member info in the guild - always use fresh API data
 	botMember, err := b.session.GuildMember(guildID, b.session.State.User.ID)

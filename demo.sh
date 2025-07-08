@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# SoulHound Bot Testing and Demonstration Script
+echo "🎵 SoulHound Discord Music Bot - Testing Script"
+echo "================================================"
+
+echo ""
+echo "🔧 Building the bot..."
+if ! go build -o soulhound cmd/main.go; then
+    echo "❌ Build failed!"
+    exit 1
+fi
+echo "✅ Build successful!"
+
+echo ""
+echo "🧪 Running tests..."
+if ! go test ./...; then
+    echo "❌ Tests failed!"
+    exit 1
+fi
+echo "✅ All tests passed!"
+
+echo ""
+echo "📋 Key fixes implemented:"
+echo "-------------------------"
+echo "✅ Voice State Detection:"
+echo "   - Fixed voice state update handler to copy all VoiceState fields"
+echo "   - Added initialization of voice states on bot ready"
+echo "   - Enhanced logging and diagnostics"
+echo ""
+echo "✅ Audio Streaming:"
+echo "   - Fixed critical issue where YouTube/Spotify IDs were streamed directly"
+echo "   - Added proper error messages explaining limitations"
+echo "   - Implemented test audio for mock tracks"
+echo "   - Clear feedback about what will actually happen"
+echo ""
+echo "✅ Enhanced Diagnostics:"
+echo "   - Better debug commands with permission checking"
+echo "   - Voice channel analysis tools"
+echo "   - Comprehensive error messages"
+
+echo ""
+echo "🎮 Bot Commands Available:"
+echo "-------------------------"
+echo "Music Commands (require voice channel):"
+echo "  !play <query>     - Add song to queue (use yt: or sp: prefix)"
+echo "  !pause            - Pause current playback"
+echo "  !resume           - Resume playback"
+echo "  !stop             - Stop and clear queue"
+echo "  !skip             - Skip to next track"
+echo ""
+echo "Debug Commands:"
+echo "  !debug            - Show comprehensive debug info"
+echo "  !voicetest        - Test voice state detection"
+echo "  !refreshvoice     - Force refresh voice state data"
+echo "  !diagnose         - Guild and channel analysis"
+echo ""
+echo "Other Commands:"
+echo "  !help             - Show all commands"
+echo "  !queue            - Show current queue"
+
+echo ""
+echo "🚀 Usage Examples:"
+echo "-----------------"
+echo "!play test                    # Plays test audio (silence)"
+echo "!play yt:never gonna give you up # Adds YouTube song (explains streaming requirements)"
+echo "!play sp:shape of you         # Adds Spotify song (explains limitations)"
+echo "!debug                        # Shows voice state and permission info"
+
+echo ""
+echo "⚠️  Important Notes:"
+echo "-------------------"
+echo "1. Voice Detection: Bot now properly tracks voice states and provides"
+echo "   detailed diagnostics if detection fails"
+echo ""
+echo "2. Audio Streaming: Bot explains requirements for real audio streaming:"
+echo "   - YouTube: Requires youtube-dl/yt-dlp for audio extraction"
+echo "   - Spotify: Not supported due to licensing restrictions"
+echo "   - Test tracks: Work with silence audio for demonstration"
+echo ""
+echo "3. Permissions: Bot validates Discord permissions and provides helpful"
+echo "   troubleshooting information"
+
+echo ""
+echo "📦 To run the bot:"
+echo "export DISCORD_TOKEN='your_bot_token_here'"
+echo "./soulhound"
+
+echo ""
+echo "🔍 To test with a real Discord server:"
+echo "1. Set up a Discord bot in Discord Developer Portal"
+echo "2. Invite bot with proper permissions (View Channels, Connect, Speak, etc.)"
+echo "3. Set DISCORD_TOKEN environment variable"
+echo "4. Join a voice channel and test with !play test"
+
+echo ""
+echo "✨ The bot is now ready with improved voice detection and clear audio streaming feedback!"
