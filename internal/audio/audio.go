@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"log"
+
+	"github.com/kkdai/youtube/v2"
 )
 
 type MusicProvider interface {
@@ -148,9 +151,44 @@ func (yt *YouTubeProvider) GetStreamURL(id string) (string, error) {
 		return id, nil
 	}
 	
-	// For actual YouTube video IDs, we need external tools to extract stream URLs
-	// Return the video ID for now - the streaming function will handle the error appropriately
-	return id, nil
+	// Use the YouTube library to get stream URL
+	client := youtube.Client{}
+	
+	video, err := client.GetVideo(id)
+	if err != nil {
+		log.Printf("Failed to get YouTube video info for ID %s: %v", id, err)
+		return "", fmt.Errorf("failed to get video information: %w", err)
+	}
+	
+	// Get the best audio format available
+	formats := video.Formats.WithAudioChannels()
+	if len(formats) == 0 {
+		return "", fmt.Errorf("no audio formats available for video %s", id)
+	}
+	
+	// Find the best audio-only format or the best format with audio
+	var bestFormat *youtube.Format
+	for _, format := range formats {
+		if format.AudioChannels > 0 {
+			if bestFormat == nil || format.Bitrate > bestFormat.Bitrate {
+				bestFormat = &format
+			}
+		}
+	}
+	
+	if bestFormat == nil {
+		return "", fmt.Errorf("no suitable audio format found for video %s", id)
+	}
+	
+	// Get the stream URL for the selected format
+	streamURL, err := client.GetStreamURL(video, bestFormat)
+	if err != nil {
+		log.Printf("Failed to get stream URL for video %s: %v", id, err)
+		return "", fmt.Errorf("failed to get stream URL: %w", err)
+	}
+	
+	log.Printf("Successfully obtained stream URL for YouTube video %s", id)
+	return streamURL, nil
 }
 
 func (yt *YouTubeProvider) GetRecommendations(genre string) ([]SearchResult, error) {

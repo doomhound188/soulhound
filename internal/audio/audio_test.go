@@ -43,13 +43,14 @@ func TestYouTubeStreamURL(t *testing.T) {
 		t.Errorf("Expected mock ID to be returned as-is, got: %s", url)
 	}
 	
-	// Test with real YouTube ID
+	// Test with real YouTube ID (now returns actual stream URL)
 	url, err = yt.GetStreamURL("dQw4w9WgXcQ")
 	if err != nil {
 		t.Errorf("GetStreamURL failed for YouTube ID: %v", err)
 	}
-	if url != "dQw4w9WgXcQ" {
-		t.Errorf("Expected YouTube ID to be returned as-is, got: %s", url)
+	// With the YouTube library, we now get actual stream URLs, not just the ID
+	if url == "" {
+		t.Error("Expected non-empty stream URL for YouTube ID")
 	}
 	
 	// Test with empty ID

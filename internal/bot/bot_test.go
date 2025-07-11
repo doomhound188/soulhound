@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
@@ -92,16 +93,16 @@ func TestVoiceStateTracking(t *testing.T) {
 		t.Error("Expected voice state to be tracked after update")
 	}
 
-	if vs.ChannelID != channelID {
-		t.Errorf("Expected channel ID %s, got %s", channelID, vs.ChannelID)
+	if vs.VoiceState.ChannelID != channelID {
+		t.Errorf("Expected channel ID %s, got %s", channelID, vs.VoiceState.ChannelID)
 	}
 
-	if vs.UserID != userID {
-		t.Errorf("Expected user ID %s, got %s", userID, vs.UserID)
+	if vs.VoiceState.UserID != userID {
+		t.Errorf("Expected user ID %s, got %s", userID, vs.VoiceState.UserID)
 	}
 
-	if vs.GuildID != guildID {
-		t.Errorf("Expected guild ID %s, got %s", guildID, vs.GuildID)
+	if vs.VoiceState.GuildID != guildID {
+		t.Errorf("Expected guild ID %s, got %s", guildID, vs.VoiceState.GuildID)
 	}
 
 	// Test voice state removal
@@ -192,10 +193,11 @@ func TestStreamAudioMock(t *testing.T) {
 	// Test YouTube URL detection
 	err = bot.streamAudio("dQw4w9WgXcQ", vc)
 	if err == nil {
-		t.Error("Expected error explaining YouTube streaming requirements")
+		t.Error("Expected error when trying to stream with nil connection")
 	}
-	if err != nil && err.Error() != "YouTube audio streaming requires additional setup. Please install youtube-dl or yt-dlp for audio extraction" {
-		t.Errorf("Expected specific YouTube error message, got: %v", err)
+	// The error should be about nil connection since we're not providing a real voice connection
+	if err != nil && !strings.Contains(err.Error(), "voice connection is nil") {
+		t.Errorf("Expected nil connection error, got: %v", err)
 	}
 
 	// Test Spotify ID detection

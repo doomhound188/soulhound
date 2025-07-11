@@ -22,9 +22,16 @@ type Bot struct {
 	youtubePlayer *audio.YouTubeProvider
 	spotifyPlayer *audio.SpotifyProvider
 	voiceConn     map[string]*VoiceConnection
-	voiceStates   map[string]*discordgo.VoiceState // Track voice states manually
+	voiceStates   map[string]*VoiceStateInfo // Enhanced voice state tracking
 	mu            sync.Mutex
 	isPlaying     bool
+}
+
+// Enhanced voice state tracking with timestamps and validation
+type VoiceStateInfo struct {
+	VoiceState *discordgo.VoiceState
+	LastUpdate time.Time
+	Validated  bool
 }
 
 type VoiceConnection struct {
@@ -47,7 +54,7 @@ func New(cfg *config.Config) (*Bot, error) {
 		youtubePlayer: audio.NewYouTubeProvider(cfg.YouTubeToken),
 		spotifyPlayer: audio.NewSpotifyProvider(cfg.SpotifyToken),
 		voiceConn:     make(map[string]*VoiceConnection),
-		voiceStates:   make(map[string]*discordgo.VoiceState),
+		voiceStates:   make(map[string]*VoiceStateInfo),
 	}
 
 	session.AddHandler(bot.messageHandler)
@@ -89,7 +96,11 @@ func (b *Bot) readyHandler(s *discordgo.Session, r *discordgo.Ready) {
 			for _, vs := range guild.VoiceStates {
 				if vs.ChannelID != "" {
 					key := vs.GuildID + ":" + vs.UserID
-					b.voiceStates[key] = vs
+					b.voiceStates[key] = &VoiceStateInfo{
+						VoiceState: vs,
+						LastUpdate: time.Now(),
+						Validated:  true,
+					}
 					totalVoiceStates++
 				}
 			}
@@ -114,16 +125,20 @@ func (b *Bot) voiceStateUpdateHandler(s *discordgo.Session, vsu *discordgo.Voice
 		log.Printf("🔊 Internal tracking: Removed user %s from guild %s (total tracked: %d)", vsu.UserID, vsu.GuildID, len(b.voiceStates))
 	} else {
 		log.Printf("User %s joined voice channel %s in guild %s", vsu.UserID, vsu.ChannelID, vsu.GuildID)
-		b.voiceStates[key] = &discordgo.VoiceState{
-			UserID:    vsu.UserID,
-			ChannelID: vsu.ChannelID,
-			GuildID:   vsu.GuildID,
-			SessionID: vsu.SessionID,
-			Deaf:      vsu.Deaf,
-			Mute:      vsu.Mute,
-			SelfDeaf:  vsu.SelfDeaf,
-			SelfMute:  vsu.SelfMute,
-			Suppress:  vsu.Suppress,
+		b.voiceStates[key] = &VoiceStateInfo{
+			VoiceState: &discordgo.VoiceState{
+				UserID:    vsu.UserID,
+				ChannelID: vsu.ChannelID,
+				GuildID:   vsu.GuildID,
+				SessionID: vsu.SessionID,
+				Deaf:      vsu.Deaf,
+				Mute:      vsu.Mute,
+				SelfDeaf:  vsu.SelfDeaf,
+				SelfMute:  vsu.SelfMute,
+				Suppress:  vsu.Suppress,
+			},
+			LastUpdate: time.Now(),
+			Validated:  true,
 		}
 		log.Printf("🔊 Internal tracking: Added user %s to channel %s in guild %s (total tracked: %d)", vsu.UserID, vsu.ChannelID, vsu.GuildID, len(b.voiceStates))
 	}
@@ -178,9 +193,9 @@ func (b *Bot) messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		log.Printf("Voice detection: Trying method 1 - internal voice state tracking")
 		b.mu.Lock()
 		key := m.GuildID + ":" + m.Author.ID
-		if vs, exists := b.voiceStates[key]; exists && vs.ChannelID != "" {
-			log.Printf("Voice detection: Found voice state in internal tracking - Channel: %s", vs.ChannelID)
-			voiceState = vs
+		if vs, exists := b.voiceStates[key]; exists && vs.VoiceState.ChannelID != "" {
+			log.Printf("Voice detection: Found voice state in internal tracking - Channel: %s", vs.VoiceState.ChannelID)
+			voiceState = vs.VoiceState
 		}
 		b.mu.Unlock()
 
@@ -656,9 +671,9 @@ func (b *Bot) streamAudio(url string, vc *VoiceConnection) error {
 	}
 
 	// Check if this is a YouTube URL or ID
-	if strings.Contains(url, "youtube.com") || strings.Contains(url, "youtu.be") || len(url) == 11 {
-		log.Printf("YouTube content detected. Audio streaming requires external tools like youtube-dl or yt-dlp")
-		return fmt.Errorf("YouTube audio streaming requires additional setup. Please install youtube-dl or yt-dlp for audio extraction")
+	if strings.Contains(url, "youtube.com") || strings.Contains(url, "youtu.be") || (len(url) == 11 && !strings.Contains(url, "/")) {
+		log.Printf("YouTube content detected, attempting to stream using YouTube library")
+		return b.streamYouTubeAudio(url, vc)
 	}
 
 	// Check if this is a Spotify ID
@@ -707,6 +722,27 @@ func (b *Bot) streamTestAudio(vc *VoiceConnection) error {
 
 	log.Printf("Test audio stream completed successfully")
 	return nil
+}
+
+// streamYouTubeAudio attempts to stream YouTube audio using the YouTube library
+func (b *Bot) streamYouTubeAudio(videoID string, vc *VoiceConnection) error {
+	log.Printf("Attempting to stream YouTube audio for video ID: %s", videoID)
+
+	if vc.connection == nil {
+		return fmt.Errorf("voice connection is nil")
+	}
+
+	// Get the stream URL using our YouTube provider
+	streamURL, err := b.youtubePlayer.GetStreamURL(videoID)
+	if err != nil {
+		log.Printf("Failed to get YouTube stream URL for %s: %v", videoID, err)
+		return fmt.Errorf("failed to get YouTube stream URL: %w", err)
+	}
+
+	log.Printf("Successfully obtained YouTube stream URL, attempting to stream")
+
+	// Now stream the URL using DCA
+	return b.streamDirectAudio(streamURL, vc)
 }
 
 // streamDirectAudio attempts to stream a direct audio file URL
@@ -1120,8 +1156,8 @@ func (b *Bot) handleVoiceTest(guildID, userID string) string {
 	// Check internal tracking
 	b.mu.Lock()
 	key := guildID + ":" + userID
-	if vs, exists := b.voiceStates[key]; exists && vs.ChannelID != "" {
-		response.WriteString(fmt.Sprintf("✅ **Internal tracking:** User in channel %s\n", vs.ChannelID))
+	if vs, exists := b.voiceStates[key]; exists && vs.VoiceState.ChannelID != "" {
+		response.WriteString(fmt.Sprintf("✅ **Internal tracking:** User in channel %s\n", vs.VoiceState.ChannelID))
 	} else {
 		response.WriteString("❌ **Internal tracking:** No voice state found\n")
 	}
@@ -1205,7 +1241,11 @@ func (b *Bot) handleRefreshVoice(guildID string) string {
 	for _, vs := range guild.VoiceStates {
 		if vs.ChannelID != "" {
 			key := vs.GuildID + ":" + vs.UserID
-			b.voiceStates[key] = vs
+			b.voiceStates[key] = &VoiceStateInfo{
+				VoiceState: vs,
+				LastUpdate: time.Now(),
+				Validated:  true,
+			}
 			addedCount++
 		}
 	}
