@@ -151,43 +151,47 @@ func (yt *YouTubeProvider) GetStreamURL(id string) (string, error) {
 		return id, nil
 	}
 	
-	// Use the YouTube library to get stream URL
+	// First try using the YouTube library for direct streaming
 	client := youtube.Client{}
 	
 	video, err := client.GetVideo(id)
 	if err != nil {
 		log.Printf("Failed to get YouTube video info for ID %s: %v", id, err)
-		return "", fmt.Errorf("failed to get video information: %w", err)
+		// If the library fails, we'll return an error but suggest using yt-dlp
+		return "", fmt.Errorf("failed to get video information. For better YouTube support, install yt-dlp: %w", err)
 	}
 	
 	// Get the best audio format available
 	formats := video.Formats.WithAudioChannels()
 	if len(formats) == 0 {
-		return "", fmt.Errorf("no audio formats available for video %s", id)
+		return "", fmt.Errorf("no audio formats available for video %s. Try installing yt-dlp for better format support", id)
 	}
 	
 	// Find the best audio-only format or the best format with audio
 	var bestFormat *youtube.Format
 	for _, format := range formats {
 		if format.AudioChannels > 0 {
-			if bestFormat == nil || format.Bitrate > bestFormat.Bitrate {
+			// Prefer audio-only formats (they usually have better quality and are more reliable)
+			if bestFormat == nil || 
+			   (format.MimeType == "audio/webm" && bestFormat.MimeType != "audio/webm") ||
+			   (format.AudioChannels > 0 && format.Bitrate > bestFormat.Bitrate) {
 				bestFormat = &format
 			}
 		}
 	}
 	
 	if bestFormat == nil {
-		return "", fmt.Errorf("no suitable audio format found for video %s", id)
+		return "", fmt.Errorf("no suitable audio format found for video %s. Consider using yt-dlp for better format detection", id)
 	}
 	
 	// Get the stream URL for the selected format
 	streamURL, err := client.GetStreamURL(video, bestFormat)
 	if err != nil {
 		log.Printf("Failed to get stream URL for video %s: %v", id, err)
-		return "", fmt.Errorf("failed to get stream URL: %w", err)
+		return "", fmt.Errorf("failed to get stream URL. YouTube may have changed their API. Consider using yt-dlp: %w", err)
 	}
 	
-	log.Printf("Successfully obtained stream URL for YouTube video %s", id)
+	log.Printf("Successfully obtained stream URL for YouTube video %s (format: %s, bitrate: %d)", id, bestFormat.MimeType, bestFormat.Bitrate)
 	return streamURL, nil
 }
 
